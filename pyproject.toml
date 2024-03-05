@@ -4,6 +4,8 @@ version = "0.1.0"
 description = ""
 authors = ["opqrstuvcut"]
 readme = "README.md"
+homepage = "https://github.com/opqrstuvcut/"
+repository = "https://github.com/opqrstuvcut/DIFR"
 
 [tool.poetry.dependencies]
 python = "^3.9"
