@@ -39,4 +39,4 @@ difr --target_dir_path ./data/train --save_dir_path ./data/train_unique --compar
 ```
 
 Output:  
-![output1](./images/output_example.png)
+![output1](https://github.com/opqrstuvcut/DIFR/blob/main/images/output_example.png)
