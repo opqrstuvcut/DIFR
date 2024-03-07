@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "difr"
-version = "0.1.0"
-description = ""
+version = "1.0.0"
+description = "This tool offers a solution for identifying and managing similar images across multiple directories."
 authors = ["opqrstuvcut"]
 readme = "README.md"
 homepage = "https://github.com/opqrstuvcut/"
@@ -11,8 +11,7 @@ repository = "https://github.com/opqrstuvcut/DIFR"
 python = "^3.9"
 onnxruntime = "^1.10"
 Pillow = "^10.0.0"
-tqdm = "^4.0.0"
-
+rich = "^13.0.0"
 
 [build-system]
 requires = ["poetry-core"]
