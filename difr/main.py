@@ -1,4 +1,5 @@
 """main."""
+
 import argparse
 import shutil
 import sys
@@ -106,25 +107,25 @@ def _parse_argument() -> argparse.Namespace:
         "This option allows you to easily separate and keep only the unique images from your dataset. "
         "If the directory does not exist, the tool attempts to create it, depending on permissions.",
     )
+    parser.add_argument(
+        "--block_size", "-bs", type=int, default=1000, help="Number of images per block for tournament dedup."
+    )
 
     return parser.parse_args()
 
 
-def _save_images(image_paths: list[Path], removed_images: set[Path], save_dir_path: Path) -> None:
+def _save_images(image_paths: list[Path], save_dir_path: Path) -> None:
     if save_dir_path.is_dir():
         shutil.rmtree(save_dir_path)
     save_dir_path.mkdir(parents=True)
 
     for path in track(image_paths):
-        if path in removed_images:
-            continue
-
         shutil.copy(path, save_dir_path)
 
-    console.print(f"{len(image_paths) - len(removed_images)} images have been saved to {save_dir_path}.")
+    console.print(f"{len(image_paths)} images have been saved to {save_dir_path}.")
 
 
-def _print_results(similars: Sequence[tuple[Path, Path, float]], removed_images: set[Path]) -> None:
+def _print_results(similars: Sequence[tuple[Path, Path, float]]) -> None:
     console.print(f"Found {len(similars)} pairs of similar images.")
     table = Table(show_header=True)
     table.add_column("image1")
@@ -132,13 +133,6 @@ def _print_results(similars: Sequence[tuple[Path, Path, float]], removed_images:
     table.add_column("similarity")
     for p1, p2, s in similars:
         table.add_row(str(p1), str(p2), str(s))
-    console.print(table)
-
-    console.print("The following images will not be saved.")
-    table = Table(show_header=True)
-    table.add_column("deleted image")
-    for p in removed_images:
-        table.add_row(str(p))
     console.print(table)
 
 
@@ -168,6 +162,94 @@ def _get_removed_images(compare_self: bool, similars: Sequence[tuple[Path, Path,
     return removed_images
 
 
+def _chunk(seq: list[Path], size: int) -> list[list[Path]]:
+    if size <= 0:
+        return [seq]
+    return [seq[i : i + size] for i in range(0, len(seq), size)]
+
+
+def _dedup_block(
+    sif: SimilarImageFinder,
+    block_targets: list[Path],
+    comp_image_paths: list[Path],
+    batch_size: int,
+    similarity_threshold: float,
+    compare_self: bool,
+) -> tuple[list[Path], list[tuple[Path, Path, float]]]:
+    similars = sif.find_similars(
+        target_image_paths=block_targets,
+        comp_image_paths=comp_image_paths,
+        batch_size=batch_size,
+        similarity_threshold=similarity_threshold,
+        compare_self=compare_self,
+    )
+    removed = _get_removed_images(compare_self=compare_self, similars=similars)
+    uniques = [p for p in block_targets if p not in removed]
+    return uniques, list(similars)
+
+
+def _tournament_pairwise_dedup(
+    sif: SimilarImageFinder,
+    initial_targets: list[Path],
+    comp_image_paths: list[Path],
+    batch_size: int,
+    similarity_threshold: float,
+    block_size: int,
+    compare_self: bool,
+) -> tuple[list[Path], list[tuple[Path, Path, float]]]:
+    # Round 1: 外部比較あり
+    blocks = _chunk(initial_targets, block_size)
+    all_similars: list[tuple[Path, Path, float]] = []
+
+    next_blocks: list[list[Path]] = []
+    console.print(f"[bold]Round 1[/bold]: {len(blocks)} blocks")
+    for i, blk in enumerate(blocks, 1):
+        console.print(f"  Block {i}/{len(blocks)}")
+
+        uniques, sims = _dedup_block(
+            sif,
+            blk,
+            comp_image_paths,
+            batch_size=batch_size,
+            similarity_threshold=similarity_threshold,
+            compare_self=compare_self,
+        )
+        next_blocks.append(uniques)
+        all_similars.extend(sims)
+
+    blocks = next_blocks
+    round_idx = 2
+
+    if not compare_self:
+        final_uniques: list[Path] = []
+        for b in blocks:
+            final_uniques.extend(b)
+
+        return final_uniques, all_similars
+
+    # Round 2+: ペア結合しながら自己比較のみで削る
+    while len(blocks) > 1:
+        console.print(f"[bold]Round {round_idx}[/bold]: merging {len(blocks)} -> { (len(blocks)+1)//2 } blocks")
+        merged_blocks: list[list[Path]] = []
+        for i in range(0, len(blocks), 2):
+            merged = blocks[i] + blocks[i + 1] if i + 1 < len(blocks) else blocks[i]
+            uniques, sims = _dedup_block(
+                sif,
+                merged,
+                [],  # 外部比較は不要
+                batch_size=batch_size,
+                similarity_threshold=similarity_threshold,
+                compare_self=True,
+            )
+            merged_blocks.append(uniques)
+            all_similars.extend(sims)
+        blocks = merged_blocks
+        round_idx += 1
+
+    final_uniques = blocks[0] if blocks else []
+    return final_uniques, all_similars
+
+
 def main() -> None:
     """Run."""
     args = _parse_argument()
@@ -183,18 +265,18 @@ def main() -> None:
     target_image_paths = list(args.target_dir_path.glob("*"))
     comp_image_paths = _get_comp_image_paths(args.compare_dir_path)
 
-    similars = sif.find_similars(
-        target_image_paths,
-        comp_image_paths,
+    unique_images, similars = _tournament_pairwise_dedup(
+        sif=sif,
+        initial_targets=target_image_paths,
+        comp_image_paths=comp_image_paths,
         batch_size=args.batch_size,
         similarity_threshold=args.similarity_threshold,
+        block_size=args.block_size,
         compare_self=args.compare_self,
     )
 
-    removed_images = _get_removed_images(args.compare_self, similars)
-
-    _print_results(similars, removed_images)
-    _save_images(target_image_paths, removed_images, args.save_dir_path)
+    _print_results(similars)
+    _save_images(unique_images, args.save_dir_path)
 
     cache_dir: Path = args.cache_dir_path
     if cache_dir:
