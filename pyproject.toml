@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "difr"
-version = "1.0.2"
+version = "1.0.3"
 description = "This tool offers a solution for identifying and managing similar images across multiple directories."
 authors = ["opqrstuvcut"]
 readme = "README.md"
